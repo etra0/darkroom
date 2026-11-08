@@ -1112,6 +1112,27 @@
         </label>
       </div>
 
+      <div class="toggle-row">
+        <div class="toggle-label-wrap">
+          <span class="toggle-label">System Notifications</span>
+          <span class="toggle-sublabel">Uses OS notifications for system vibration</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="toggleSystemNotif">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <!-- Test & Diagnostic Box -->
+      <div style="background:var(--red-darkest); border:1px solid var(--red-dim); border-radius:8px; padding:12px; display:flex; flex-direction:column; gap:8px;">
+        <button class="btn btn-side" id="btnTestAlert" style="width:100%; padding:10px; border-color:var(--red-muted); color:var(--red-bright);">
+          ▶ Test Alarm & Vibration
+        </button>
+        <div id="diagnosticText" style="font-size:0.75rem; line-height:1.4; color:var(--red-muted); font-family:var(--font-mono);">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
       <!-- Safelight Red Brightness Slider -->
       <div class="brightness-slider-container">
         <div style="display:flex; justify-content:space-between; font-size:0.8rem; color:var(--red-primary);">
@@ -1147,6 +1168,7 @@
         autoStart: false,      // Default: manual Continue requirement as requested
         audioAlert: true,
         vibrateAlert: true,
+        systemNotification: false,
         brightness: 100
       };
 
@@ -1184,6 +1206,9 @@
       const toggleAutoStart = document.getElementById('toggleAutoStart');
       const toggleAudio = document.getElementById('toggleAudio');
       const toggleVibrate = document.getElementById('toggleVibrate');
+      const toggleSystemNotif = document.getElementById('toggleSystemNotif');
+      const btnTestAlert = document.getElementById('btnTestAlert');
+      const diagnosticText = document.getElementById('diagnosticText');
       const sliderBrightness = document.getElementById('sliderBrightness');
       const brightnessValText = document.getElementById('brightnessValText');
       const setCycleValEl = document.getElementById('setCycleVal');
@@ -1289,41 +1314,97 @@
         }
       }
 
-      // Vibration Alert
-      function triggerVibration() {
-        if (!prefs.vibrateAlert) return;
+      // Tactile button click haptic (Instant response on direct touch gesture)
+      function triggerTouchHaptic() {
         if ('vibrate' in navigator) {
-          // Strong triple burst: 600ms on, 200ms off, 600ms on, 200ms off, 800ms on
-          navigator.vibrate([600, 200, 600, 200, 800]);
+          try {
+            navigator.vibrate(35);
+          } catch (e) {}
         }
       }
 
-      // Safe Audio Alert (440Hz safe tone chime)
+      // Vibration Alert (Optimized for Android device compatibility)
+      function triggerVibration(isDirectGesture = false) {
+        if (!prefs.vibrateAlert) return;
+        if ('vibrate' in navigator) {
+          try {
+            // Triple pulse with standard safe durations (<=300ms)
+            navigator.vibrate([250, 100, 250, 100, 350]);
+          } catch (e) {}
+        }
+
+        // Native OS Notification fallback (vibrates via system notification service)
+        if (prefs.systemNotification && 'Notification' in window && Notification.permission === 'granted') {
+          try {
+            const stage = stages[currentStageIndex];
+            new Notification(`Darkroom: ${stage.name} Complete`, {
+              body: 'Time to transfer print to next tray.',
+              vibrate: [250, 100, 250, 100, 350],
+              tag: 'darkroom-timer-alert',
+              renotify: true
+            });
+          } catch (e) {}
+        }
+      }
+
+      let silentLoopNode = null;
+      function ensureAudioActive() {
+        if (!audioCtx) {
+          const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+          if (AudioContextClass) audioCtx = new AudioContextClass();
+        }
+        if (audioCtx && audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+        if (audioCtx && !silentLoopNode) {
+          try {
+            // Keep iOS WebKit AudioContext from sleeping during long timer stages
+            const silentBuffer = audioCtx.createBuffer(1, 1, 22050);
+            silentLoopNode = audioCtx.createBufferSource();
+            silentLoopNode.buffer = silentBuffer;
+            silentLoopNode.loop = true;
+            silentLoopNode.connect(audioCtx.destination);
+            silentLoopNode.start(0);
+          } catch (e) {}
+        }
+      }
+
+      // Safe Audio Alert: Audible chime + 60Hz Sub-Bass Rumble (shakes phone speaker chassis)
       function triggerAudioAlert() {
         if (!prefs.audioAlert) return;
         try {
-          if (!audioCtx) {
-            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-            if (AudioContextClass) audioCtx = new AudioContextClass();
-          }
+          ensureAudioActive();
           if (!audioCtx) return;
-          if (audioCtx.state === 'suspended') {
-            audioCtx.resume();
-          }
 
           const now = audioCtx.currentTime;
-          [0, 0.35, 0.7].forEach((delay) => {
+
+          // 1. Acoustic Speaker Rumble: 60Hz triangle wave to physically move the device speaker cone
+          const bassOsc = audioCtx.createOscillator();
+          const bassGain = audioCtx.createGain();
+          bassOsc.type = 'triangle';
+          bassOsc.frequency.setValueAtTime(60, now);
+          bassGain.gain.setValueAtTime(0, now);
+          bassGain.gain.linearRampToValueAtTime(0.85, now + 0.05);
+          bassGain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+          bassOsc.connect(bassGain);
+          bassGain.connect(audioCtx.destination);
+          bassOsc.start(now);
+          bassOsc.stop(now + 1.2);
+
+          // 2. Harmonic chime triad (440Hz -> 554Hz -> 659Hz)
+          [440, 554, 659].forEach((freq, idx) => {
+            const delay = idx * 0.22;
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
             osc.type = 'sine';
-            osc.frequency.setValueAtTime(440, now + delay);
+            osc.frequency.setValueAtTime(freq, now + delay);
             gain.gain.setValueAtTime(0, now + delay);
-            gain.gain.linearRampToValueAtTime(0.25, now + delay + 0.04);
-            gain.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.28);
+            gain.gain.linearRampToValueAtTime(0.28, now + delay + 0.03);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.35);
             osc.connect(gain);
             gain.connect(audioCtx.destination);
             osc.start(now + delay);
-            osc.stop(now + delay + 0.3);
+            osc.stop(now + delay + 0.38);
           });
         } catch (e) {
           // Audio autoplay handling
@@ -1408,11 +1489,7 @@
           remainingSeconds = stages[currentStageIndex].seconds;
         }
 
-        if (!audioCtx) {
-          const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-          if (AudioContextClass) audioCtx = new AudioContextClass();
-        }
-
+        ensureAudioActive();
         requestWakeLock();
 
         isRunning = true;
@@ -1502,6 +1579,33 @@
         renderCurrentStage();
       }
 
+      function updateDiagnostics() {
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+          (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        const hasVibrate = 'vibrate' in navigator;
+        const isSecure = window.isSecureContext;
+
+        let lines = [];
+        if (isIOS) {
+          lines.push("🍎 Apple iOS Safari: Apple blocks the HTML5 Vibration API on all iOS devices. The app uses 60Hz acoustic speaker rumble (chassis vibration), harmonic chimes, and screen pulsing.");
+        } else if (hasVibrate) {
+          lines.push("🤖 Vibration API: Supported on this device.");
+          if (!isSecure) {
+            lines.push("⚠️ Insecure Context: Chrome blocks vibrations over local file:// or http://. Test via https:// (e.g. GitHub Pages).");
+          } else {
+            lines.push("💡 If you don't feel vibrations on Android: 1) Verify phone is not in Silent/Do Not Disturb mode. 2) Ensure 'Haptic feedback / Touch vibration' is turned ON in Android Settings &gt; Sound.");
+          }
+        } else {
+          lines.push("❌ Vibration API: Not supported by this browser.");
+        }
+
+        if ('Notification' in window) {
+          lines.push(`🔔 System Notifications: ${Notification.permission}`);
+        }
+
+        diagnosticText.innerHTML = lines.join('<br><br>');
+      }
+
       // Settings Modal handling
       function populateSettingsUI() {
         document.getElementById('setDevM').textContent = String(Math.floor(stages[0].seconds / 60)).padStart(2, '0');
@@ -1517,11 +1621,15 @@
         toggleAutoStart.checked = !!prefs.autoStart;
         toggleAudio.checked = !!prefs.audioAlert;
         toggleVibrate.checked = !!prefs.vibrateAlert;
+        toggleSystemNotif.checked = !!prefs.systemNotification;
         sliderBrightness.value = prefs.brightness || 100;
         brightnessValText.textContent = `${sliderBrightness.value}%`;
+
+        updateDiagnostics();
       }
 
       function adjustStageMinutes(stageIdx, delta) {
+        triggerTouchHaptic();
         let m = Math.floor(stages[stageIdx].seconds / 60) + delta;
         let s = stages[stageIdx].seconds % 60;
         if (m < 0) m = 0;
@@ -1538,6 +1646,7 @@
       }
 
       function adjustStageSeconds(stageIdx, delta) {
+        triggerTouchHaptic();
         let m = Math.floor(stages[stageIdx].seconds / 60);
         let s = (stages[stageIdx].seconds % 60) + delta;
         if (s < 0) {
@@ -1562,37 +1671,95 @@
         updateTabsDisplay();
       }
 
+      function selectStage(index) {
+        triggerTouchHaptic();
+        if (index === currentStageIndex && !isRunning) return;
+        pauseTimer();
+        isWaitingToContinue = false;
+        currentStageIndex = index;
+        remainingSeconds = stages[currentStageIndex].seconds;
+        renderCurrentStage();
+      }
+
+      function adjustCycle(delta) {
+        triggerTouchHaptic();
+        cycleCount = Math.max(1, cycleCount + delta);
+        renderCurrentStage();
+      }
+
       // Event Listeners
-      btnToggleEl.addEventListener('click', toggleTimer);
-      btnResetEl.addEventListener('click', resetStageTimer);
+      btnToggleEl.addEventListener('click', () => {
+        triggerTouchHaptic();
+        ensureAudioActive();
+        toggleTimer();
+      });
+
+      btnResetEl.addEventListener('click', () => {
+        triggerTouchHaptic();
+        resetStageTimer();
+      });
+
       btnNextEl.addEventListener('click', () => {
+        triggerTouchHaptic();
         isWaitingToContinue = false;
         advanceToNextStage(false);
       });
 
       btnOpenSettings.addEventListener('click', () => {
+        triggerTouchHaptic();
         populateSettingsUI();
         settingsModal.classList.add('open');
       });
 
       btnCloseSettings.addEventListener('click', () => {
+        triggerTouchHaptic();
         settingsModal.classList.remove('open');
       });
 
+      btnTestAlert.addEventListener('click', () => {
+        triggerTouchHaptic();
+        triggerVibration(true);
+        triggerAudioAlert();
+        flashFinishAlert();
+        updateDiagnostics();
+      });
+
       toggleAutoStart.addEventListener('change', (e) => {
+        triggerTouchHaptic();
         prefs.autoStart = e.target.checked;
         savePrefs();
         autoAdvanceDisplayEl.textContent = `Mode: ${prefs.autoStart ? 'Auto-Start' : 'Manual Continue'}`;
       });
 
       toggleAudio.addEventListener('change', (e) => {
+        triggerTouchHaptic();
         prefs.audioAlert = e.target.checked;
         savePrefs();
       });
 
       toggleVibrate.addEventListener('change', (e) => {
+        triggerTouchHaptic();
         prefs.vibrateAlert = e.target.checked;
         savePrefs();
+      });
+
+      toggleSystemNotif.addEventListener('change', async (e) => {
+        triggerTouchHaptic();
+        if (e.target.checked) {
+          if ('Notification' in window) {
+            const permission = await Notification.requestPermission();
+            prefs.systemNotification = permission === 'granted';
+            toggleSystemNotif.checked = prefs.systemNotification;
+          } else {
+            alert('Notifications not supported in this browser.');
+            e.target.checked = false;
+            prefs.systemNotification = false;
+          }
+        } else {
+          prefs.systemNotification = false;
+        }
+        savePrefs();
+        updateDiagnostics();
       });
 
       sliderBrightness.addEventListener('input', (e) => {
@@ -1600,40 +1767,56 @@
         savePrefs();
       });
 
-      btnToggleFS.addEventListener('click', toggleFullscreen);
+      btnToggleFS.addEventListener('click', () => {
+        triggerTouchHaptic();
+        toggleFullscreen();
+      });
 
       btnEnterFS.addEventListener('click', () => {
+        triggerTouchHaptic();
+        ensureAudioActive();
         fsPrompt.style.display = 'none';
         toggleFullscreen();
         requestWakeLock();
       });
 
       btnSkipFS.addEventListener('click', () => {
+        triggerTouchHaptic();
+        ensureAudioActive();
         fsPrompt.style.display = 'none';
         requestWakeLock();
       });
 
       // Tap on timer ring to Start / Pause / Continue
-      document.getElementById('timerRingArea').addEventListener('click', toggleTimer);
+      document.getElementById('timerRingArea').addEventListener('click', () => {
+        triggerTouchHaptic();
+        ensureAudioActive();
+        toggleTimer();
+      });
 
       // Keyboard navigation for desktop / widescreen workstations
       window.addEventListener('keydown', (e) => {
-        // Ignore if settings modal is open and focusing input
         if (settingsModal.classList.contains('open') && e.key !== 'Escape') {
           return;
         }
 
         if (e.code === 'Space') {
           e.preventDefault();
+          triggerTouchHaptic();
+          ensureAudioActive();
           toggleTimer();
         } else if (e.key === 'r' || e.key === 'R') {
+          triggerTouchHaptic();
           resetStageTimer();
         } else if (e.key === 'n' || e.key === 'N' || e.key === 'ArrowRight') {
+          triggerTouchHaptic();
           isWaitingToContinue = false;
           advanceToNextStage(false);
         } else if (e.key === 'f' || e.key === 'F') {
+          triggerTouchHaptic();
           toggleFullscreen();
         } else if (e.key === 's' || e.key === 'S') {
+          triggerTouchHaptic();
           populateSettingsUI();
           settingsModal.classList.toggle('open');
         } else if (e.key === 'Escape') {
