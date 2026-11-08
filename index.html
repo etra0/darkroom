@@ -1,0 +1,1660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Darkroom Timer (OLED Safe)</title>
+  <style>
+    /* Strictly pure black and red palette for safelight and OLED protection */
+    :root {
+      color-scheme: dark;
+      --bg-black: #000000;
+      --red-bright: #ff2a2a;
+      --red-primary: #e61919;
+      --red-muted: #801010;
+      --red-dim: #400808;
+      --red-darkest: #1a0303;
+      --red-border: #4a0d0d;
+      --font-mono: ui-monospace, "SF Mono", "Courier New", monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+      outline-color: var(--red-muted);
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    *:focus-visible {
+      outline: 2px solid var(--red-bright);
+      outline-offset: 2px;
+    }
+
+    ::selection {
+      background: var(--red-muted);
+      color: var(--red-bright);
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: var(--bg-black);
+      color: var(--red-primary);
+      font-family: var(--font-sans);
+      touch-action: manipulation;
+    }
+
+    /* Entire container */
+    #app {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+      height: 100%;
+      height: 100dvh;
+      padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+      background-color: var(--bg-black);
+    }
+
+    /* Header Bar */
+    header {
+      width: 100%;
+      max-width: 1200px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--red-darkest);
+    }
+
+    .brand-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .app-title {
+      font-size: 0.95rem;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      font-weight: 800;
+      color: var(--red-muted);
+    }
+
+    .safelight-pill {
+      font-size: 0.68rem;
+      font-family: var(--font-mono);
+      letter-spacing: 1px;
+      padding: 3px 8px;
+      border-radius: 12px;
+      border: 1px solid var(--red-border);
+      color: var(--red-bright);
+      background: var(--red-darkest);
+      text-transform: uppercase;
+    }
+
+    .top-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .icon-btn {
+      background: transparent;
+      border: 1px solid var(--red-border);
+      color: var(--red-primary);
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-family: var(--font-mono);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+    }
+
+    .icon-btn:active {
+      background: var(--red-dim);
+      border-color: var(--red-bright);
+      color: var(--red-bright);
+    }
+
+    /* Main Responsive Layout Grid / Flex */
+    .main-workspace {
+      width: 100%;
+      max-width: 1200px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      gap: 16px;
+    }
+
+    /* Center Stage / Dial */
+    .timer-section {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      flex: 1;
+    }
+
+    .timer-ring-wrapper {
+      position: relative;
+      width: min(72vw, 320px);
+      height: min(72vw, 320px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+
+    .timer-ring-svg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      transform: rotate(-90deg);
+    }
+
+    .timer-ring-bg {
+      fill: none;
+      stroke: var(--red-darkest);
+      stroke-width: 7;
+    }
+
+    .timer-ring-progress {
+      fill: none;
+      stroke: var(--red-primary);
+      stroke-width: 7;
+      stroke-linecap: round;
+      stroke-dasharray: 565.48;
+      stroke-dashoffset: 0;
+      transition: stroke-dashoffset 0.15s linear, stroke 0.3s;
+    }
+
+    .timer-display {
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      pointer-events: none;
+    }
+
+    .current-stage-name {
+      font-size: 1.15rem;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      font-weight: 800;
+      color: var(--red-bright);
+      margin-bottom: 4px;
+    }
+
+    .time-digits {
+      font-family: var(--font-mono);
+      font-size: min(18vw, 84px);
+      line-height: 1;
+      font-weight: 700;
+      color: var(--red-bright);
+      letter-spacing: -2px;
+    }
+
+    .sub-indicator {
+      margin-top: 8px;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--red-muted);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .sub-indicator.ready-continue {
+      color: var(--red-bright);
+      font-weight: 700;
+    }
+
+    /* Stages Track (Develop, Stop Bath, Fixer) */
+    .sidebar-pane {
+      width: 100%;
+      max-width: 540px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .stages-track {
+      width: 100%;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .stage-tab {
+      background: var(--red-darkest);
+      border: 1.5px solid var(--red-dim);
+      border-radius: 8px;
+      padding: 10px 6px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .stage-tab:active {
+      transform: scale(0.97);
+    }
+
+    .stage-tab.active {
+      border-color: var(--red-bright);
+      background: var(--red-dim);
+      box-shadow: 0 0 14px rgba(255, 42, 42, 0.25);
+    }
+
+    .stage-tab-name {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      font-weight: 800;
+      color: var(--red-muted);
+    }
+
+    .stage-tab.active .stage-tab-name {
+      color: var(--red-bright);
+    }
+
+    .stage-tab-time {
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      color: var(--red-muted);
+    }
+
+    .stage-tab.active .stage-tab-time {
+      color: var(--red-primary);
+      font-weight: 700;
+    }
+
+    .stage-tab-status {
+      font-size: 0.65rem;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--red-border);
+      font-family: var(--font-mono);
+    }
+
+    .stage-tab.active .stage-tab-status {
+      color: var(--red-bright);
+    }
+
+    /* Main Action Controls */
+    .controls {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .primary-btn-row {
+      display: flex;
+      gap: 12px;
+      width: 100%;
+    }
+
+    .btn {
+      font-family: var(--font-sans);
+      font-weight: 800;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      border-radius: 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.05s;
+    }
+
+    .btn:active {
+      transform: scale(0.98);
+    }
+
+    .btn-main {
+      flex: 2;
+      background: var(--red-dim);
+      border: 2px solid var(--red-bright);
+      color: var(--red-bright);
+      font-size: 1.3rem;
+      padding: 16px 8px;
+      min-height: 64px;
+      box-shadow: 0 0 10px rgba(255, 42, 42, 0.15);
+    }
+
+    .btn-main.running {
+      background: var(--red-darkest);
+      border-color: var(--red-primary);
+      color: var(--red-primary);
+    }
+
+    /* Pulsing button when waiting for user to manually press Continue */
+    @keyframes pulse-continue-btn {
+      0% {
+        box-shadow: 0 0 4px rgba(255, 42, 42, 0.3);
+        border-color: var(--red-primary);
+      }
+      50% {
+        box-shadow: 0 0 20px rgba(255, 42, 42, 0.7);
+        border-color: var(--red-bright);
+      }
+      100% {
+        box-shadow: 0 0 4px rgba(255, 42, 42, 0.3);
+        border-color: var(--red-primary);
+      }
+    }
+
+    .btn-main.waiting-continue {
+      animation: pulse-continue-btn 1.4s infinite ease-in-out;
+      background: var(--red-dim);
+      border-width: 2.5px;
+    }
+
+    .btn-side {
+      flex: 1;
+      background: var(--bg-black);
+      border: 1px solid var(--red-border);
+      color: var(--red-muted);
+      font-size: 0.95rem;
+      padding: 14px 0;
+    }
+
+    .btn-side:active {
+      background: var(--red-dim);
+      border-color: var(--red-muted);
+      color: var(--red-bright);
+    }
+
+    .quick-status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 4px;
+      font-size: 0.75rem;
+      color: var(--red-muted);
+      font-family: var(--font-mono);
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--red-dim);
+    }
+
+    .status-dot.active {
+      background: var(--red-bright);
+      box-shadow: 0 0 6px var(--red-bright);
+    }
+
+    .keyboard-hints {
+      display: none;
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      color: var(--red-dim);
+      text-align: center;
+      letter-spacing: 0.5px;
+    }
+
+    .kbd {
+      border: 1px solid var(--red-border);
+      padding: 2px 5px;
+      border-radius: 4px;
+      color: var(--red-muted);
+    }
+
+    /* ========================================================
+       WIDE SCREEN & TABLET / LANDSCAPE OPTIMIZATIONS
+       ======================================================== */
+    @media (min-width: 820px) {
+      .main-workspace {
+        flex-direction: row;
+        justify-content: space-around;
+        align-items: center;
+        gap: 40px;
+        padding: 20px 0;
+      }
+
+      .timer-section {
+        flex: 1.2;
+        max-width: 580px;
+      }
+
+      .timer-ring-wrapper {
+        width: min(44vw, 440px);
+        height: min(44vw, 440px);
+      }
+
+      .time-digits {
+        font-size: min(13vw, 116px);
+      }
+
+      .current-stage-name {
+        font-size: 1.6rem;
+        letter-spacing: 4px;
+      }
+
+      .sub-indicator {
+        font-size: 1rem;
+        margin-top: 12px;
+      }
+
+      .sidebar-pane {
+        flex: 1;
+        max-width: 480px;
+        gap: 22px;
+      }
+
+      .stages-track {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+
+      .stage-tab {
+        flex-direction: row;
+        justify-content: space-between;
+        padding: 16px 20px;
+        border-radius: 10px;
+      }
+
+      .stage-tab-name {
+        font-size: 1.05rem;
+        letter-spacing: 2px;
+      }
+
+      .stage-tab-time {
+        font-size: 1.15rem;
+      }
+
+      .stage-tab-status {
+        font-size: 0.8rem;
+      }
+
+      .btn-main {
+        font-size: 1.45rem;
+        min-height: 76px;
+      }
+
+      .btn-side {
+        font-size: 1.05rem;
+        min-height: 76px;
+      }
+
+      .keyboard-hints {
+        display: block;
+      }
+    }
+
+    /* Small height devices in landscape (e.g. phones turned horizontally) */
+    @media (max-height: 520px) and (orientation: landscape) {
+      #app {
+        padding: 6px 16px 8px 16px;
+      }
+
+      header {
+        padding-bottom: 4px;
+      }
+
+      .main-workspace {
+        flex-direction: row;
+        justify-content: center;
+        align-items: center;
+        gap: 24px;
+        padding: 4px 0;
+      }
+
+      .timer-section {
+        flex: 1;
+      }
+
+      .timer-ring-wrapper {
+        width: min(72vh, 230px);
+        height: min(72vh, 230px);
+      }
+
+      .time-digits {
+        font-size: min(16vh, 60px);
+      }
+
+      .current-stage-name {
+        font-size: 0.95rem;
+        margin-bottom: 2px;
+      }
+
+      .sub-indicator {
+        font-size: 0.72rem;
+        margin-top: 4px;
+      }
+
+      .sidebar-pane {
+        flex: 1;
+        max-width: 380px;
+        gap: 8px;
+      }
+
+      .stages-track {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+      }
+
+      .stage-tab {
+        padding: 6px 4px;
+      }
+
+      .stage-tab-name {
+        font-size: 0.72rem;
+      }
+
+      .stage-tab-time {
+        font-size: 0.78rem;
+      }
+
+      .btn-main {
+        font-size: 1.1rem;
+        min-height: 52px;
+        padding: 8px;
+      }
+
+      .btn-side {
+        font-size: 0.85rem;
+        min-height: 52px;
+      }
+
+      .quick-status-row {
+        font-size: 0.7rem;
+      }
+    }
+
+    /* Modal Sheet for Settings */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.92);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 16px;
+    }
+
+    .modal-overlay.open {
+      display: flex;
+    }
+
+    .modal-box {
+      width: 100%;
+      max-width: 460px;
+      background: var(--bg-black);
+      border: 1.5px solid var(--red-border);
+      border-radius: 12px;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      max-height: 92vh;
+      overflow-y: auto;
+    }
+
+    .modal-title {
+      font-size: 1.15rem;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--red-bright);
+      font-weight: 800;
+      text-align: center;
+      border-bottom: 1px solid var(--red-dim);
+      padding-bottom: 12px;
+    }
+
+    .duration-setting-row {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .duration-setting-label {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--red-primary);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .time-picker-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      background: var(--red-darkest);
+      border: 1px solid var(--red-dim);
+      border-radius: 8px;
+      padding: 8px 12px;
+    }
+
+    .time-unit-controls {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .time-val {
+      font-family: var(--font-mono);
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: var(--red-bright);
+      min-width: 32px;
+      text-align: center;
+    }
+
+    .time-subtext {
+      font-size: 0.75rem;
+      color: var(--red-muted);
+      margin-left: 2px;
+    }
+
+    .step-btn {
+      background: var(--red-dim);
+      border: 1px solid var(--red-muted);
+      color: var(--red-bright);
+      width: 36px;
+      height: 36px;
+      border-radius: 6px;
+      font-size: 1.15rem;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+
+    .step-btn:active {
+      background: var(--red-bright);
+      color: var(--bg-black);
+    }
+
+    .toggle-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-top: 1px solid var(--red-darkest);
+    }
+
+    .toggle-label-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      max-width: 80%;
+    }
+
+    .toggle-label {
+      font-size: 0.85rem;
+      color: var(--red-primary);
+      font-weight: 600;
+    }
+
+    .toggle-sublabel {
+      font-size: 0.72rem;
+      color: var(--red-muted);
+    }
+
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+      flex-shrink: 0;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: var(--red-darkest);
+      border: 1px solid var(--red-dim);
+      transition: .2s;
+      border-radius: 24px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 3px;
+      bottom: 3px;
+      background-color: var(--red-muted);
+      transition: .2s;
+      border-radius: 50%;
+    }
+
+    input:checked + .slider {
+      background-color: var(--red-dim);
+      border-color: var(--red-bright);
+    }
+
+    input:checked + .slider:before {
+      transform: translateX(20px);
+      background-color: var(--red-bright);
+    }
+
+    .brightness-slider-container {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 10px 0;
+      border-top: 1px solid var(--red-darkest);
+    }
+
+    .brightness-slider {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 6px;
+      background: var(--red-dim);
+      outline: none;
+      border-radius: 3px;
+    }
+
+    .brightness-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 24px;
+      height: 24px;
+      background: var(--red-bright);
+      cursor: pointer;
+      border-radius: 50%;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 8px;
+    }
+
+    .modal-actions .btn {
+      flex: 1;
+      padding: 14px;
+      font-size: 0.95rem;
+    }
+
+    /* Flashing alert state on finish */
+    @keyframes darkroom-alert-pulse {
+      0% { background-color: #000000; }
+      50% { background-color: #2e0000; }
+      100% { background-color: #000000; }
+    }
+
+    .alert-finish {
+      animation: darkroom-alert-pulse 0.75s 4;
+    }
+
+    /* Fullscreen overlay warning banner if not in fullscreen */
+    #fullscreenPrompt {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #000000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 30px;
+      text-align: center;
+      z-index: 999;
+      gap: 20px;
+    }
+
+    .fs-badge {
+      border: 1px solid var(--red-primary);
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--red-bright);
+      margin-bottom: 8px;
+    }
+
+    .fs-title {
+      font-size: 1.6rem;
+      font-weight: 800;
+      color: var(--red-bright);
+      text-transform: uppercase;
+      letter-spacing: 2px;
+    }
+
+    .fs-text {
+      color: var(--red-primary);
+      font-size: 0.95rem;
+      line-height: 1.5;
+      max-width: 400px;
+    }
+
+    .fs-btn {
+      background: var(--red-dim);
+      border: 2px solid var(--red-bright);
+      color: var(--red-bright);
+      padding: 16px 36px;
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+
+    .fs-btn:active {
+      background: var(--red-bright);
+      color: var(--bg-black);
+    }
+
+    .fs-skip {
+      background: transparent;
+      border: none;
+      color: var(--red-muted);
+      font-size: 0.85rem;
+      text-decoration: underline;
+      cursor: pointer;
+      padding: 8px;
+    }
+
+  </style>
+</head>
+<body>
+
+  <!-- Fullscreen / Wake Lock entry gate -->
+  <div id="fullscreenPrompt">
+    <div class="fs-badge">Darkroom Safe Mode</div>
+    <div class="fs-title">Enter Darkroom</div>
+    <div class="fs-text">
+      To protect photo paper and OLED pixels, this app disables white light, requests full screen to hide status bars/notifs, and keeps screen awake.
+    </div>
+    <button id="btnEnterFS" class="fs-btn">Start Session</button>
+    <button id="btnSkipFS" class="fs-skip">Continue without fullscreen</button>
+  </div>
+
+  <div id="app">
+    <!-- Top Bar -->
+    <header>
+      <div class="brand-group">
+        <div class="app-title">Darkroom Timer</div>
+        <div class="safelight-pill">Safelight OLED</div>
+      </div>
+      <div class="top-actions">
+        <button id="btnToggleFS" class="icon-btn" title="Toggle Fullscreen">
+          <span id="fsIcon">⛶</span> <span id="fsText">Full</span>
+        </button>
+        <button id="btnOpenSettings" class="icon-btn" title="Timer Settings">
+          <span>⚙</span> Times
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workspace (Responsive: column on mobile, side-by-side on wide screens) -->
+    <div class="main-workspace">
+      <!-- Center Giant Countdown Display with Progress Ring -->
+      <div class="timer-section">
+        <div class="timer-ring-wrapper" id="timerRingArea" title="Tap to Start / Pause / Continue">
+          <svg class="timer-ring-svg" viewBox="0 0 200 200">
+            <circle class="timer-ring-bg" cx="100" cy="100" r="90" />
+            <circle class="timer-ring-progress" id="ringProgress" cx="100" cy="100" r="90" />
+          </svg>
+          <div class="timer-display">
+            <div class="current-stage-name" id="stageNameDisplay">DEVELOP</div>
+            <div class="time-digits" id="timeDigits">01:30</div>
+            <div class="sub-indicator" id="subStatus">READY</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sidebar / Action Controls -->
+      <div class="sidebar-pane">
+        <!-- Stage Indicators (Develop, Stop Bath, Fixer) -->
+        <div class="stages-track">
+          <div class="stage-tab active" id="tabStage0" onclick="window.darkroomTimer.selectStage(0)">
+            <div class="stage-tab-name">1. Develop</div>
+            <div class="stage-tab-time" id="tabTime0">--:--</div>
+            <div class="stage-tab-status" id="tabStatus0">ACTIVE</div>
+          </div>
+          <div class="stage-tab" id="tabStage1" onclick="window.darkroomTimer.selectStage(1)">
+            <div class="stage-tab-name">2. Stop Bath</div>
+            <div class="stage-tab-time" id="tabTime1">--:--</div>
+            <div class="stage-tab-status" id="tabStatus1">QUEUED</div>
+          </div>
+          <div class="stage-tab" id="tabStage2" onclick="window.darkroomTimer.selectStage(2)">
+            <div class="stage-tab-name">3. Fixer</div>
+            <div class="stage-tab-time" id="tabTime2">--:--</div>
+            <div class="stage-tab-status" id="tabStatus2">QUEUED</div>
+          </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls">
+          <div class="primary-btn-row">
+            <button class="btn btn-side" id="btnReset" title="Reset current stage (R)">Reset</button>
+            <button class="btn btn-main" id="btnToggle" title="Start / Pause / Continue (Space)">START</button>
+            <button class="btn btn-side" id="btnNext" title="Skip to next stage (N)">Next &gt;</button>
+          </div>
+
+          <div class="quick-status-row">
+            <div class="status-badge">
+              <div class="status-dot" id="wakeLockDot"></div>
+              <span id="wakeLockStatus">WakeLock: Idle</span>
+            </div>
+            <div class="status-badge">
+              <span id="cycleCountDisplay">Cycle: #1</span>
+            </div>
+            <div class="status-badge">
+              <span id="autoAdvanceDisplay">Mode: Manual Continue</span>
+            </div>
+          </div>
+
+          <div class="keyboard-hints">
+            <span class="kbd">Space</span> Start/Pause &bull; <span class="kbd">R</span> Reset &bull; <span class="kbd">N</span> Next Stage &bull; <span class="kbd">F</span> Fullscreen
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal Dialog -->
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal-box">
+      <div class="modal-title">Timer Settings</div>
+
+      <!-- Develop Duration -->
+      <div class="duration-setting-row">
+        <div class="duration-setting-label">Stage 1: Develop</div>
+        <div class="time-picker-row">
+          <div class="time-unit-controls">
+            <button class="step-btn" onclick="window.darkroomTimer.adjustStageMinutes(0, -1)">-</button>
+            <div class="time-val" id="setDevM">01</div>
+            <div class="time-subtext">m</div>
+            <button class="step-btn" onclick="window.darkroomTimer.adjustStageMinutes(0, 1)">+</button>
+          </div>
+          <div class="time-unit-controls">
+            <button class="step-btn" onclick="window.darkroomTimer.adjustStageSeconds(0, -5)">-</button>
+            <div class="time-val" id="setDevS">30</div>
+            <div class="time-subtext">s</div>
+            <button class="step-btn" onclick="window.darkroomTimer.adjustStageSeconds(0, 5)">+</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stop Bath Duration -->
+      <div class="duration-setting-row">
+        <div class="duration-setting-label">Stage 2: Stop Bath</div>
+        <div class="time-picker-row">
+          <div class="time-unit-controls">
+            <button class="step-btn" onclick="window.darkroomTimer.adjustStageMinutes(1, -1)">-</button>
+            <div class="time-val" id="setStopM">00</div>
+            <div class="time-subtext">m</div>
+            <button class="step-btn" onclick="window.darkroomTimer.adjustStageMinutes(1, 1)">+</button>
+          </div>
+          <div class="time-unit-controls">
+            <button class="step-btn" onclick="window.darkroomTimer.adjustStageSeconds(1, -5)">-</button>
+            <div class="time-val" id="setStopS">30</div>
+            <div class="time-subtext">s</div>
+            <button class="step-btn" onclick="window.darkroomTimer.adjustStageSeconds(1, 5)">+</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Fixer Duration -->
+      <div class="duration-setting-row">
+        <div class="duration-setting-label">Stage 3: Fixer</div>
+        <div class="time-picker-row">
+          <div class="time-unit-controls">
+            <button class="step-btn" onclick="window.darkroomTimer.adjustStageMinutes(2, -1)">-</button>
+            <div class="time-val" id="setFixM">02</div>
+            <div class="time-subtext">m</div>
+            <button class="step-btn" onclick="window.darkroomTimer.adjustStageMinutes(2, 1)">+</button>
+          </div>
+          <div class="time-unit-controls">
+            <button class="step-btn" onclick="window.darkroomTimer.adjustStageSeconds(2, -5)">-</button>
+            <div class="time-val" id="setFixS">00</div>
+            <div class="time-subtext">s</div>
+            <button class="step-btn" onclick="window.darkroomTimer.adjustStageSeconds(2, 5)">+</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cycle Reset / Counter -->
+      <div class="duration-setting-row">
+        <div class="duration-setting-label">Print Cycle Counter</div>
+        <div class="time-picker-row">
+          <span style="font-size:0.85rem; color:var(--red-primary);">Current Cycle Number</span>
+          <div class="time-unit-controls">
+            <button class="step-btn" onclick="window.darkroomTimer.adjustCycle(-1)">-</button>
+            <div class="time-val" id="setCycleVal">1</div>
+            <button class="step-btn" onclick="window.darkroomTimer.adjustCycle(1)">+</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Preferences -->
+      <div class="toggle-row">
+        <div class="toggle-label-wrap">
+          <span class="toggle-label">Auto-Start next stage</span>
+          <span class="toggle-sublabel">Off: moves to next stage but waits for manual Continue tap</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="toggleAutoStart">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <div class="toggle-label-wrap">
+          <span class="toggle-label">Audio alert tone</span>
+          <span class="toggle-sublabel">Low 440Hz sine wave tone on stage completion</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="toggleAudio" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <div class="toggle-label-wrap">
+          <span class="toggle-label">Vibration alert</span>
+          <span class="toggle-sublabel">Haptic pulse pattern when stage finishes</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="toggleVibrate" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <!-- Safelight Red Brightness Slider -->
+      <div class="brightness-slider-container">
+        <div style="display:flex; justify-content:space-between; font-size:0.8rem; color:var(--red-primary);">
+          <span>Red Intensity (Safelight Dimming)</span>
+          <span id="brightnessValText">100%</span>
+        </div>
+        <input type="range" min="25" max="100" value="100" class="brightness-slider" id="sliderBrightness">
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn btn-main" id="btnCloseSettings">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      // Stage configurations
+      const DEFAULT_STAGES = [
+        { name: 'Develop', seconds: 90 },
+        { name: 'Stop Bath', seconds: 30 },
+        { name: 'Fixer', seconds: 120 }
+      ];
+
+      const STORAGE_KEY_TIMES = 'darkroom_timer_durations_v1';
+      const STORAGE_KEY_PREFS = 'darkroom_timer_prefs_v1';
+
+      // State
+      let stages = JSON.parse(localStorage.getItem(STORAGE_KEY_TIMES)) || DEFAULT_STAGES;
+      let prefs = JSON.parse(localStorage.getItem(STORAGE_KEY_PREFS)) || {
+        autoStart: false,      // Default: manual Continue requirement as requested
+        audioAlert: true,
+        vibrateAlert: true,
+        brightness: 100
+      };
+
+      let currentStageIndex = 0;
+      let cycleCount = 1;
+      let isRunning = false;
+      let isWaitingToContinue = false;
+      let remainingSeconds = stages[currentStageIndex].seconds;
+      let timerEndTimestamp = null;
+      let timerInterval = null;
+      let wakeLockSentinel = null;
+      let audioCtx = null;
+
+      // Circle circumference for 90 radius: 2 * PI * 90 = 565.486
+      const CIRCLE_CIRCUMFERENCE = 2 * Math.PI * 90;
+
+      // DOM Elements
+      const appEl = document.getElementById('app');
+      const timeDigitsEl = document.getElementById('timeDigits');
+      const stageNameEl = document.getElementById('stageNameDisplay');
+      const subStatusEl = document.getElementById('subStatus');
+      const ringProgressEl = document.getElementById('ringProgress');
+      const btnToggleEl = document.getElementById('btnToggle');
+      const btnResetEl = document.getElementById('btnReset');
+      const btnNextEl = document.getElementById('btnNext');
+      const cycleCountDisplayEl = document.getElementById('cycleCountDisplay');
+      const autoAdvanceDisplayEl = document.getElementById('autoAdvanceDisplay');
+      const wakeLockDotEl = document.getElementById('wakeLockDot');
+      const wakeLockStatusEl = document.getElementById('wakeLockStatus');
+
+      // Settings Modal Elements
+      const settingsModal = document.getElementById('settingsModal');
+      const btnOpenSettings = document.getElementById('btnOpenSettings');
+      const btnCloseSettings = document.getElementById('btnCloseSettings');
+      const toggleAutoStart = document.getElementById('toggleAutoStart');
+      const toggleAudio = document.getElementById('toggleAudio');
+      const toggleVibrate = document.getElementById('toggleVibrate');
+      const sliderBrightness = document.getElementById('sliderBrightness');
+      const brightnessValText = document.getElementById('brightnessValText');
+      const setCycleValEl = document.getElementById('setCycleVal');
+
+      // Fullscreen Elements
+      const fsPrompt = document.getElementById('fullscreenPrompt');
+      const btnEnterFS = document.getElementById('btnEnterFS');
+      const btnSkipFS = document.getElementById('btnSkipFS');
+      const btnToggleFS = document.getElementById('btnToggleFS');
+      const fsText = document.getElementById('fsText');
+
+      // Helper: Format mm:ss
+      function formatTime(totalSec) {
+        const m = Math.floor(Math.max(0, totalSec) / 60);
+        const s = Math.floor(Math.max(0, totalSec) % 60);
+        return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+      }
+
+      function saveTimes() {
+        localStorage.setItem(STORAGE_KEY_TIMES, JSON.stringify(stages));
+      }
+
+      function savePrefs() {
+        localStorage.setItem(STORAGE_KEY_PREFS, JSON.stringify(prefs));
+      }
+
+      function applyBrightness(val) {
+        prefs.brightness = val;
+        brightnessValText.textContent = `${val}%`;
+        const factor = val / 100;
+        const rBright = Math.round(255 * factor);
+        const rPrim = Math.round(230 * factor);
+        const rMut = Math.round(128 * factor);
+        const rDim = Math.round(64 * factor);
+        document.documentElement.style.setProperty('--red-bright', `rgb(${rBright}, 0, 0)`);
+        document.documentElement.style.setProperty('--red-primary', `rgb(${rPrim}, 0, 0)`);
+        document.documentElement.style.setProperty('--red-muted', `rgb(${rMut}, 0, 0)`);
+        document.documentElement.style.setProperty('--red-dim', `rgb(${rDim}, 0, 0)`);
+      }
+
+      function updateTabsDisplay() {
+        stages.forEach((st, idx) => {
+          const tab = document.getElementById(`tabStage${idx}`);
+          const tabTime = document.getElementById(`tabTime${idx}`);
+          const tabStatus = document.getElementById(`tabStatus${idx}`);
+          
+          if (tab) {
+            tab.classList.toggle('active', idx === currentStageIndex);
+          }
+          if (tabTime) {
+            tabTime.textContent = formatTime(st.seconds);
+          }
+          if (tabStatus) {
+            if (idx === currentStageIndex) {
+              tabStatus.textContent = isRunning ? 'RUNNING' : (isWaitingToContinue ? 'READY' : 'ACTIVE');
+            } else if (idx < currentStageIndex) {
+              tabStatus.textContent = 'DONE';
+            } else {
+              tabStatus.textContent = 'QUEUED';
+            }
+          }
+        });
+      }
+
+      function updateRingProgress(current, total) {
+        if (!total || total <= 0) {
+          ringProgressEl.style.strokeDashoffset = 0;
+          return;
+        }
+        const progressFraction = Math.max(0, Math.min(1, current / total));
+        const offset = CIRCLE_CIRCUMFERENCE * (1 - progressFraction);
+        ringProgressEl.style.strokeDashoffset = offset;
+      }
+
+      function renderCurrentStage() {
+        const stage = stages[currentStageIndex];
+        stageNameEl.textContent = stage.name.toUpperCase();
+        timeDigitsEl.textContent = formatTime(remainingSeconds);
+        updateRingProgress(remainingSeconds, stage.seconds);
+        updateTabsDisplay();
+
+        cycleCountDisplayEl.textContent = `Cycle: #${cycleCount}`;
+        if (setCycleValEl) setCycleValEl.textContent = cycleCount;
+        autoAdvanceDisplayEl.textContent = `Mode: ${prefs.autoStart ? 'Auto-Start' : 'Manual Continue'}`;
+
+        btnToggleEl.classList.remove('running', 'waiting-continue');
+
+        if (isRunning) {
+          btnToggleEl.textContent = 'PAUSE';
+          btnToggleEl.classList.add('running');
+          subStatusEl.textContent = 'RUNNING';
+          subStatusEl.className = 'sub-indicator';
+        } else if (isWaitingToContinue) {
+          // Finished previous watch, advanced to next watch, waiting for manual continue!
+          btnToggleEl.textContent = `CONTINUE (${stage.name.toUpperCase()})`;
+          btnToggleEl.classList.add('waiting-continue');
+          subStatusEl.textContent = 'READY • TAP CONTINUE';
+          subStatusEl.className = 'sub-indicator ready-continue';
+        } else {
+          btnToggleEl.textContent = remainingSeconds === stage.seconds ? 'START' : 'RESUME';
+          subStatusEl.textContent = remainingSeconds === 0 ? 'COMPLETE' : 'PAUSED';
+          subStatusEl.className = 'sub-indicator';
+        }
+      }
+
+      // Vibration Alert
+      function triggerVibration() {
+        if (!prefs.vibrateAlert) return;
+        if ('vibrate' in navigator) {
+          // Strong triple burst: 600ms on, 200ms off, 600ms on, 200ms off, 800ms on
+          navigator.vibrate([600, 200, 600, 200, 800]);
+        }
+      }
+
+      // Safe Audio Alert (440Hz safe tone chime)
+      function triggerAudioAlert() {
+        if (!prefs.audioAlert) return;
+        try {
+          if (!audioCtx) {
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            if (AudioContextClass) audioCtx = new AudioContextClass();
+          }
+          if (!audioCtx) return;
+          if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+          }
+
+          const now = audioCtx.currentTime;
+          [0, 0.35, 0.7].forEach((delay) => {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(440, now + delay);
+            gain.gain.setValueAtTime(0, now + delay);
+            gain.gain.linearRampToValueAtTime(0.25, now + delay + 0.04);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.28);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start(now + delay);
+            osc.stop(now + delay + 0.3);
+          });
+        } catch (e) {
+          // Audio autoplay handling
+        }
+      }
+
+      function flashFinishAlert() {
+        appEl.classList.add('alert-finish');
+        setTimeout(() => {
+          appEl.classList.remove('alert-finish');
+        }, 3200);
+      }
+
+      // Screen Wake Lock API
+      async function requestWakeLock() {
+        if ('wakeLock' in navigator) {
+          try {
+            wakeLockSentinel = await navigator.wakeLock.request('screen');
+            wakeLockSentinel.addEventListener('release', () => {
+              wakeLockDotEl.classList.remove('active');
+              wakeLockStatusEl.textContent = 'WakeLock: Off';
+            });
+            wakeLockDotEl.classList.add('active');
+            wakeLockStatusEl.textContent = 'WakeLock: Active';
+          } catch (err) {
+            wakeLockDotEl.classList.remove('active');
+            wakeLockStatusEl.textContent = 'WakeLock: N/A';
+          }
+        } else {
+          wakeLockStatusEl.textContent = 'WakeLock: Unsupported';
+        }
+      }
+
+      document.addEventListener('visibilitychange', () => {
+        if (wakeLockSentinel !== null && document.visibilityState === 'visible') {
+          requestWakeLock();
+        }
+      });
+
+      // Fullscreen handling
+      function toggleFullscreen() {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen().catch(() => {});
+        } else {
+          if (document.exitFullscreen) {
+            document.exitFullscreen().catch(() => {});
+          }
+        }
+      }
+
+      document.addEventListener('fullscreenchange', () => {
+        if (document.fullscreenElement) {
+          fsText.textContent = 'Exit FS';
+        } else {
+          fsText.textContent = 'Full';
+        }
+      });
+
+      // Core Tick Logic
+      function tick() {
+        if (!isRunning) return;
+
+        const now = Date.now();
+        const diffMs = timerEndTimestamp - now;
+        const diffSec = Math.ceil(diffMs / 1000);
+
+        if (diffSec <= 0) {
+          remainingSeconds = 0;
+          renderCurrentStage();
+          handleStageComplete();
+        } else {
+          remainingSeconds = diffSec;
+          renderCurrentStage();
+        }
+      }
+
+      function startTimer() {
+        if (isRunning) return;
+        isWaitingToContinue = false;
+
+        if (remainingSeconds <= 0) {
+          remainingSeconds = stages[currentStageIndex].seconds;
+        }
+
+        if (!audioCtx) {
+          const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+          if (AudioContextClass) audioCtx = new AudioContextClass();
+        }
+
+        requestWakeLock();
+
+        isRunning = true;
+        timerEndTimestamp = Date.now() + (remainingSeconds * 1000);
+        clearInterval(timerInterval);
+        timerInterval = setInterval(tick, 200);
+        renderCurrentStage();
+      }
+
+      function pauseTimer() {
+        if (!isRunning) return;
+        isRunning = false;
+        clearInterval(timerInterval);
+        renderCurrentStage();
+      }
+
+      function toggleTimer() {
+        if (isRunning) {
+          pauseTimer();
+        } else {
+          startTimer();
+        }
+      }
+
+      function resetStageTimer() {
+        pauseTimer();
+        isWaitingToContinue = false;
+        remainingSeconds = stages[currentStageIndex].seconds;
+        renderCurrentStage();
+      }
+
+      // Move to next stage
+      function advanceToNextStage(autoStart = false) {
+        pauseTimer();
+
+        if (currentStageIndex === stages.length - 1) {
+          // Finished Fixer -> Loop back to Develop & increment cycle
+          currentStageIndex = 0;
+          cycleCount++;
+        } else {
+          currentStageIndex++;
+        }
+
+        remainingSeconds = stages[currentStageIndex].seconds;
+
+        if (autoStart) {
+          isWaitingToContinue = false;
+          startTimer();
+        } else {
+          // Move to next watch, but wait for manual continue button press
+          isWaitingToContinue = true;
+          renderCurrentStage();
+        }
+      }
+
+      function handleStageComplete() {
+        clearInterval(timerInterval);
+        isRunning = false;
+
+        // Fire alerts
+        triggerVibration();
+        triggerAudioAlert();
+        flashFinishAlert();
+
+        if (prefs.autoStart) {
+          // Optional Auto-Start: 1.5s pause to notice alarm, then auto starts next
+          setTimeout(() => {
+            advanceToNextStage(true);
+          }, 1500);
+        } else {
+          // Requested Default: automatically move to next watch, but require manual Continue
+          advanceToNextStage(false);
+        }
+      }
+
+      function selectStage(index) {
+        if (index === currentStageIndex && !isRunning) return;
+        pauseTimer();
+        isWaitingToContinue = false;
+        currentStageIndex = index;
+        remainingSeconds = stages[currentStageIndex].seconds;
+        renderCurrentStage();
+      }
+
+      function adjustCycle(delta) {
+        cycleCount = Math.max(1, cycleCount + delta);
+        renderCurrentStage();
+      }
+
+      // Settings Modal handling
+      function populateSettingsUI() {
+        document.getElementById('setDevM').textContent = String(Math.floor(stages[0].seconds / 60)).padStart(2, '0');
+        document.getElementById('setDevS').textContent = String(stages[0].seconds % 60).padStart(2, '0');
+
+        document.getElementById('setStopM').textContent = String(Math.floor(stages[1].seconds / 60)).padStart(2, '0');
+        document.getElementById('setStopS').textContent = String(stages[1].seconds % 60).padStart(2, '0');
+
+        document.getElementById('setFixM').textContent = String(Math.floor(stages[2].seconds / 60)).padStart(2, '0');
+        document.getElementById('setFixS').textContent = String(stages[2].seconds % 60).padStart(2, '0');
+
+        setCycleValEl.textContent = cycleCount;
+        toggleAutoStart.checked = !!prefs.autoStart;
+        toggleAudio.checked = !!prefs.audioAlert;
+        toggleVibrate.checked = !!prefs.vibrateAlert;
+        sliderBrightness.value = prefs.brightness || 100;
+        brightnessValText.textContent = `${sliderBrightness.value}%`;
+      }
+
+      function adjustStageMinutes(stageIdx, delta) {
+        let m = Math.floor(stages[stageIdx].seconds / 60) + delta;
+        let s = stages[stageIdx].seconds % 60;
+        if (m < 0) m = 0;
+        if (m > 59) m = 59;
+        if (m === 0 && s === 0) s = 5;
+        stages[stageIdx].seconds = (m * 60) + s;
+        saveTimes();
+        populateSettingsUI();
+        if (stageIdx === currentStageIndex && !isRunning) {
+          remainingSeconds = stages[currentStageIndex].seconds;
+          renderCurrentStage();
+        }
+        updateTabsDisplay();
+      }
+
+      function adjustStageSeconds(stageIdx, delta) {
+        let m = Math.floor(stages[stageIdx].seconds / 60);
+        let s = (stages[stageIdx].seconds % 60) + delta;
+        if (s < 0) {
+          if (m > 0) {
+            m -= 1;
+            s += 60;
+          } else {
+            s = 0;
+          }
+        } else if (s >= 60) {
+          m += 1;
+          s -= 60;
+        }
+        if (m === 0 && s < 5) s = 5;
+        stages[stageIdx].seconds = (m * 60) + s;
+        saveTimes();
+        populateSettingsUI();
+        if (stageIdx === currentStageIndex && !isRunning) {
+          remainingSeconds = stages[currentStageIndex].seconds;
+          renderCurrentStage();
+        }
+        updateTabsDisplay();
+      }
+
+      // Event Listeners
+      btnToggleEl.addEventListener('click', toggleTimer);
+      btnResetEl.addEventListener('click', resetStageTimer);
+      btnNextEl.addEventListener('click', () => {
+        isWaitingToContinue = false;
+        advanceToNextStage(false);
+      });
+
+      btnOpenSettings.addEventListener('click', () => {
+        populateSettingsUI();
+        settingsModal.classList.add('open');
+      });
+
+      btnCloseSettings.addEventListener('click', () => {
+        settingsModal.classList.remove('open');
+      });
+
+      toggleAutoStart.addEventListener('change', (e) => {
+        prefs.autoStart = e.target.checked;
+        savePrefs();
+        autoAdvanceDisplayEl.textContent = `Mode: ${prefs.autoStart ? 'Auto-Start' : 'Manual Continue'}`;
+      });
+
+      toggleAudio.addEventListener('change', (e) => {
+        prefs.audioAlert = e.target.checked;
+        savePrefs();
+      });
+
+      toggleVibrate.addEventListener('change', (e) => {
+        prefs.vibrateAlert = e.target.checked;
+        savePrefs();
+      });
+
+      sliderBrightness.addEventListener('input', (e) => {
+        applyBrightness(parseInt(e.target.value, 10));
+        savePrefs();
+      });
+
+      btnToggleFS.addEventListener('click', toggleFullscreen);
+
+      btnEnterFS.addEventListener('click', () => {
+        fsPrompt.style.display = 'none';
+        toggleFullscreen();
+        requestWakeLock();
+      });
+
+      btnSkipFS.addEventListener('click', () => {
+        fsPrompt.style.display = 'none';
+        requestWakeLock();
+      });
+
+      // Tap on timer ring to Start / Pause / Continue
+      document.getElementById('timerRingArea').addEventListener('click', toggleTimer);
+
+      // Keyboard navigation for desktop / widescreen workstations
+      window.addEventListener('keydown', (e) => {
+        // Ignore if settings modal is open and focusing input
+        if (settingsModal.classList.contains('open') && e.key !== 'Escape') {
+          return;
+        }
+
+        if (e.code === 'Space') {
+          e.preventDefault();
+          toggleTimer();
+        } else if (e.key === 'r' || e.key === 'R') {
+          resetStageTimer();
+        } else if (e.key === 'n' || e.key === 'N' || e.key === 'ArrowRight') {
+          isWaitingToContinue = false;
+          advanceToNextStage(false);
+        } else if (e.key === 'f' || e.key === 'F') {
+          toggleFullscreen();
+        } else if (e.key === 's' || e.key === 'S') {
+          populateSettingsUI();
+          settingsModal.classList.toggle('open');
+        } else if (e.key === 'Escape') {
+          settingsModal.classList.remove('open');
+        }
+      });
+
+      // Expose globally for inline button handlers
+      window.darkroomTimer = {
+        selectStage,
+        adjustStageMinutes,
+        adjustStageSeconds,
+        adjustCycle
+      };
+
+      // Initialization
+      applyBrightness(prefs.brightness || 100);
+      renderCurrentStage();
+      updateTabsDisplay();
+
+    })();
+  </script>
+</body>
+</html>
